@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>costpipe · 成本分摊控制台（虚构数据）</title>
+<style>
+  :root {
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1d2740; --line:#2a3650;
+    --text:#e6ebf5; --muted:#8b98b2; --accent:#5b8def; --ok:#3fbf7f;
+    --warn:#e8a33d; --bad:#e05d6f; --chip:#243150;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:18px 26px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--muted); font-size:12px; }
+  nav { display:flex; gap:4px; padding:0 26px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  nav button { background:none; border:none; color:var(--muted); padding:12px 16px;
+    cursor:pointer; font-size:14px; border-bottom:2px solid transparent; }
+  nav button.active { color:var(--text); border-bottom-color:var(--accent); }
+  main { padding:22px 26px; max-width:1280px; margin:0 auto; }
+  .tab { display:none; } .tab.active { display:block; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .card h3 { margin:0 0 10px; font-size:13px; color:var(--muted); font-weight:600;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .kpi { font-size:26px; font-weight:700; }
+  .kpi small { font-size:13px; color:var(--muted); font-weight:400; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line);
+    vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  tr:hover td { background:var(--panel2); }
+  .chip { display:inline-block; background:var(--chip); border-radius:20px;
+    padding:2px 10px; font-size:12px; margin:2px 4px 2px 0; }
+  .chip.real { background:#1f3d2e; color:var(--ok); }
+  .chip.scenario { background:#3d2f1f; color:var(--warn); }
+  .chip.sup { background:#3d1f26; color:var(--bad); }
+  button.act { background:var(--accent); color:#fff; border:0; border-radius:8px;
+    padding:8px 14px; cursor:pointer; font-size:13px; }
+  button.act.secondary { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  input,select,textarea { background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); border-radius:8px; padding:8px 10px; font-size:13px; width:100%; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1; min-width:140px; }
+  pre { background:#0b101c; border:1px solid var(--line); border-radius:8px;
+    padding:12px; overflow:auto; font-size:12px; max-height:420px; }
+  .muted { color:var(--muted); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .toast { position:fixed; right:20px; bottom:20px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px; padding:12px 16px;
+    max-width:420px; display:none; z-index:50; }
+  .toast.err { border-color:var(--bad); }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--accent); }
+  .delta-pos { color:var(--bad); } .delta-neg { color:var(--ok); }
+  .toolbar { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>costpipe 成本分摊控制台</h1>
+  <span class="sub">虚构数据管道 · 费用明细 / 资源用量 / 组织关系 三源独立更新 · 不可变版本 · 金额守恒</span>
+</header>
+<nav id="nav">
+  <button data-tab="overview" class="active">总览</button>
+  <button data-tab="inputs">三源输入</button>
+  <button data-tab="allocations">分摊结果与版本</button>
+  <button data-tab="trace">逐笔追溯</button>
+  <button data-tab="rules">规则与情景</button>
+  <button data-tab="org">组织关系更正</button>
+  <button data-tab="subscribers">报告订阅端</button>
+</nav>
+<main>
+
+<!-- ============================== 总览 ============================== -->
+<section class="tab active" id="tab-overview">
+  <div class="grid" id="kpis"></div>
+  <div class="card" style="margin-top:14px">
+    <h3>当前分摊结果（按账期 × 情景 × 组织，单位：分）</h3>
+    <div style="overflow:auto"><table id="summary-table"></table></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>事件流（publication_log，订阅端按 seq 追平）</h3>
+    <div style="overflow:auto"><table id="events-table"></table></div>
+  </div>
+</section>
+
+<!-- ============================== 输入 ============================== -->
+<section class="tab" id="tab-inputs">
+  <div class="card">
+    <h3>补录费用明细（金额单位：元，可多条 JSON 数组）</h3>
+    <textarea id="charge-input" rows="4">[
+  {"charge_id":"INV-202611-NEW-01","period":"2026-11","service_id":"S3","vendor":"虚构云厂A","amount_cents": 99.99}
+]</textarea>
+    <div style="margin-top:8px"><button class="act" onclick="postCharges()">提交费用</button></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>补录资源使用量（usage_qty）</h3>
+    <textarea id="usage-input" rows="4">[
+  {"usage_id":"UG-202610-S3-RESEARCH","period":"2026-10","service_id":"S3","org_unit_id":"RESEARCH","usage_qty":120}
+]</textarea>
+    <div style="margin-top:8px"><button class="act" onclick="postUsage()">提交用量</button></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>费用明细</h3><div style="overflow:auto"><table id="charges-table"></table></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>资源使用量</h3><div style="overflow:auto"><table id="usage-table"></table></div>
+  </div>
+</section>
+
+<!-- ============================ 分摊结果 ============================ -->
+<section class="tab" id="tab-allocations">
+  <div class="toolbar">
+    <button class="act" onclick="recompute(false)">按账期重算（入队）</button>
+    <button class="act secondary" onclick="recompute(true)">强制重算（忽略指纹）</button>
+    <span class="muted" style="align-self:center">保存策略：每版本不可变留痕；指纹未变时自动跳过，兼顾两种策略的成本</span>
+  </div>
+  <div class="card"><h3>所有分摊版本（含被取代的历史版本）</h3>
+    <div style="overflow:auto"><table id="versions-table"></table></div></div>
+  <div class="card" style="margin-top:14px"><h3>版本明细（点击上方“查看明细”）</h3>
+    <pre id="lines-view" class="muted">选择一个版本查看逐行分摊与尾差说明…</pre></div>
+</section>
+
+<!-- ============================== 追溯 ============================== -->
+<section class="tab" id="tab-trace">
+  <div class="card">
+    <h3>逐笔去向：输入 charge_id 查询一笔费用被分给了谁</h3>
+    <div class="row">
+      <div><label>charge_id</label><input id="trace-id" value="INV-202610-S3-01"></div>
+      <div><label>情景</label><select id="trace-scenario"></select></div>
+      <div style="flex:0"><button class="act" onclick="doTrace()">追溯</button></div>
+    </div>
+    <div id="trace-result" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- ============================ 规则/情景 =========================== -->
+<section class="tab" id="tab-rules">
+  <div class="card">
+    <h3>新增规则版本（旧版本保留，不覆盖）</h3>
+    <div class="row">
+      <div><label>规则 ID（可选）</label><input id="rule-id" placeholder="rule_s3_v2"></div>
+      <div><label>情景</label><select id="rule-scenario"></select></div>
+      <div><label>服务（* 为默认）</label><input id="rule-service" value="S3"></div>
+    </div>
+    <div class="row">
+      <div><label>分摊依据</label><select id="rule-basis">
+        <option value="usage">usage 按用量</option>
+        <option value="equal">equal 平均</option>
+        <option value="fixed">fixed 固定比例</option>
+      </select></div>
+      <div><label>生效账期 YYYY-MM</label><input id="rule-eff" value="2026-11"></div>
+      <div><label>fixed 权重 JSON（仅 fixed）</label>
+        <input id="rule-weights" placeholder='{"PLAT":0.7,"DATA":0.3}'></div>
+    </div>
+    <div style="margin-top:10px"><button class="act" onclick="postRule()">保存规则版本并重算受影响账期</button></div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>情景管理</h3>
+    <div class="row">
+      <div><label>新情景 ID（is_real=0，假设分摊）</label>
+        <input id="scn-id" placeholder="whatif_2027"></div>
+      <div><label>名称</label><input id="scn-name" placeholder="2027 重组情景"></div>
+      <div style="flex:0"><button class="act" onclick="postScenario()">创建情景</button></div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>现有规则（全部版本）</h3>
+    <div style="overflow:auto"><table id="rules-table"></table></div></div>
+</section>
+
+<!-- ============================== 组织 ============================== -->
+<section class="tab" id="tab-org">
+  <div class="card">
+    <h3>组织关系更正（SCD2：关闭旧版本 + 开新版本，历史分摊自动重算）</h3>
+    <p class="muted">更正不是改名字：旧版本及其贡献保留，新版本自 valid_from 起生效，
+      所有历史账期重新派生并发布带 diff 的新版本。</p>
+    <div class="row">
+      <div><label>组织 ID</label><input id="org-id" value="DATA"></div>
+      <div><label>新名称（留空保持原名）</label><input id="org-name" placeholder="数据与AI工程组"></div>
+      <div><label>新父节点 ID（留空保持）</label><input id="org-parent" placeholder="ROOT"></div>
+      <div><label>生效日期 YYYY-MM-DD</label><input id="org-from" value="2026-11-01"></div>
+    </div>
+    <label>更正原因</label><input id="org-reason" value="演示：数据工程组升级为一级部门">
+    <div style="margin-top:10px"><button class="act" onclick="postOrgCorrection()">提交更正并追溯重算</button></div>
+  </div>
+  <div class="card" style="margin-top:14px"><h3>组织版本（SCD2 全量）</h3>
+    <div style="overflow:auto"><table id="org-table"></table></div></div>
+</section>
+
+<!-- ============================= 订阅端 ============================= -->
+<section class="tab" id="tab-subscribers">
+  <div class="card">
+    <h3>服务端记录的订阅端 offset</h3>
+    <p class="muted">订阅端是独立进程（python -m costpipe.subscriber），轮询 /api/events，
+      离线期间事件不丢；恢复后从 last_seq 继续，按顺序收到被取代的旧版本与新版本。</p>
+    <div style="overflow:auto"><table id="consumers-table"></table></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h3>订阅端本地物化结果（读取其本地 store 的快照接口由演示脚本输出）</h3>
+    <pre id="sub-view" class="muted">运行 run_demo.py 可模拟订阅端离线 → 追平全过程…</pre>
+  </div>
+</section>
+</main>
+
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const yuan = c => (c/100).toFixed(2) + ' 元';
+function toast(msg, isErr){ const t=$('#toast'); t.textContent=msg;
+  t.className='toast'+(isErr?' err':''); t.style.display='block';
+  setTimeout(()=>t.style.display='none', 4500); }
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const post = (path, body) => api(path, {method:'POST',
+  headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+
+function esc(s){ return String(s??'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function table(el, cols, rows){
+  el.innerHTML = '<thead><tr>'+cols.map(c=>`<th>${c.h}</th>`).join('')+'</tr></thead>'+
+    '<tbody>'+rows.map(r=>'<tr>'+cols.map(c=>`<td>${c.f(r)}</td>`).join('')+'</tr>').join('')+'</tbody>';
+}
+function chipScenario(s){
+  return s==='actual' ? '<span class="chip real">actual 真实</span>'
+                      : `<span class="chip scenario">${esc(s)} 情景</span>`;
+}
+
+async function loadOverview(){
+  const s = await api('/api/summary');
+  const realTotal = s.current_allocations.filter(a=>a.scenario_id==='actual')
+    .reduce((x,a)=>x+a.total_cents,0);
+  const scnTotal = s.current_allocations.filter(a=>a.scenario_id!=='actual')
+    .reduce((x,a)=>x+a.total_cents,0);
+  $('#kpis').innerHTML = [
+    ['账期数', s.periods.length, s.periods.join(', ')],
+    ['真实费用合计', yuan(realTotal), 'actual，与账单守恒'],
+    ['情景分摊合计', yuan(scnTotal), 'what-if，不计入真实费用'],
+    ['历史版本数', s.superseded_count, '被取代但仍可追溯'],
+    ['排队任务', s.queued_jobs, '等待 worker 处理'],
+    ['事件最大 seq', s.max_event_seq, '订阅端追平目标'],
+  ].map(([h,v,sub])=>`<div class="card"><h3>${h}</h3>
+     <div class="kpi">${v}</div><div class="muted" style="margin-top:6px">${esc(sub)}</div></div>`).join('');
+
+  const rows = [];
+  for(const a of s.current_allocations){
+    for(const [org,c] of Object.entries(a.org_totals_cents).sort()){
+      rows.push({period:a.period, scn:a.scenario_id, org, cents:c, v:a.version_no, vid:a.id});
+    }
+  }
+  table($('#summary-table'), [
+    {h:'账期',f:r=>r.period},{h:'情景',f:r=>chipScenario(r.scn)},
+    {h:'组织',f:r=>`<span class="chip">${esc(r.org)}</span>`},
+    {h:'分摊金额',f:r=>yuan(r.cents)},{h:'版本',f:r=>'v'+r.v},
+  ], rows);
+
+  const evs = await api('/api/events?after=0&limit=20');
+  table($('#events-table'), [
+    {h:'seq',f:e=>e.seq},{h:'事件',f:e=>`<span class="chip">${esc(e.event_type)}</span>`},
+    {h:'时间',f:e=>e.created_at},
+    {h:'payload 摘要',f:e=>esc(JSON.stringify(e.payload).slice(0,160))},
+  ], evs.reverse());
+
+  $('#consumers-table') && table($('#consumers-table'), [
+    {h:'consumer_id',f:r=>esc(r.consumer_id)},{h:'last_seq',f:r=>r.last_seq},
+    {h:'更新时间',f:r=>esc(r.updated_at||'-')},
+  ], s.consumers);
+}
+
+async function loadInputs(){
+  const [charges, usage] = await Promise.all([api('/api/charges'), api('/api/usage')]);
+  table($('#charges-table'), [
+    {h:'charge_id',f:r=>r.charge_id},{h:'账期',f:r=>r.period},
+    {h:'服务',f:r=>r.service_id},{h:'供应商',f:r=>r.vendor},
+    {h:'金额',f:r=>yuan(r.amount_cents)},
+  ], charges);
+  table($('#usage-table'), [
+    {h:'usage_id',f:r=>r.usage_id},{h:'账期',f:r=>r.period},
+    {h:'服务',f:r=>r.service_id},{h:'组织',f:r=>r.org_unit_id},
+    {h:'用量',f:r=>r.usage_qty},
+  ], usage);
+}
+
+async function loadAllocations(){
+  const versions = await api('/api/allocations');
+  table($('#versions-table'), [
+    {h:'ID',f:r=>r.id},{h:'账期',f:r=>r.period},{h:'情景',f:r=>chipScenario(r.scenario_id)},
+    {h:'版本号',f:r=>'v'+r.version_no},
+    {h:'状态',f:r=>r.status==='current'?'<span class="chip real">current</span>'
+       :'<span class="chip sup">superseded</span>'},
+    {h:'总额',f:r=>yuan(r.total_cents)},{h:'取代',f:r=>r.supersedes_id||'-'},
+    {h:'指纹',f:r=>r.input_fingerprint.slice(0,10)+'…'},
+    {h:'操作',f:r=>`<button class="act secondary" onclick="showLines(${r.id})">查看明细</button>`},
+  ], versions);
+}
+async function showLines(id){
+  const d = await api(`/api/allocations/versions/${id}/lines`);
+  $('#lines-view').textContent = JSON.stringify(d, null, 2);
+}
+
+async function loadRules(){
+  const [rules, scenarios] = await Promise.all([api('/api/rules'), api('/api/scenarios')]);
+  table($('#rules-table'), [
+    {h:'规则',f:r=>`${r.rule_id} v${r.version}`},{h:'情景',f:r=>chipScenario(r.scenario_id)},
+    {h:'服务',f:r=>r.service_id},{h:'依据',f:r=>r.basis},
+    {h:'固定权重',f:r=>r.fixed_weights?esc(JSON.stringify(r.fixed_weights)):'-'},
+    {h:'生效',f:r=>r.effective_from},{h:'启用',f:r=>r.active?'是':'否'},
+  ], rules);
+  const opts = scenarios.map(s=>`<option value="${esc(s.scenario_id)}">${esc(s.scenario_id)}</option>`).join('');
+  $('#rule-scenario').innerHTML = opts;
+  $('#trace-scenario').innerHTML = opts;
+}
+
+async function loadOrg(){
+  const org = await api('/api/org');
+  table($('#org-table'), [
+    {h:'组织 ID',f:r=>r.org_unit_id},{h:'版本',f:r=>'v'+r.version},
+    {h:'名称',f:r=>esc(r.name)},{h:'父节点',f:r=>r.parent_id||'-'},
+    {h:'有效期',f:r=>`${r.valid_from} → ${r.valid_to}`},
+    {h:'更正原因',f:r=>esc(r.change_reason)},
+  ], org);
+}
+
+async function doTrace(){
+  const id = $('#trace-id').value.trim(), scn = $('#trace-scenario').value || 'actual';
+  try{
+    const d = await api(`/api/trace/${encodeURIComponent(id)}?scenario=${encodeURIComponent(scn)}`);
+    if(!d.lines.length){ $('#trace-result').innerHTML='<p class="warn">该账期尚无分摊版本</p>'; return; }
+    const total = d.lines.reduce((x,l)=>x+l.allocated_cents,0);
+    const rows = d.lines.map(l=>({...l}));
+    $('#trace-result').innerHTML =
+      `<p>费用 <b>${esc(d.charge.charge_id)}</b>（${d.charge.period} · ${esc(d.charge.service_id)} ·
+       ${yuan(d.charge.amount_cents)}）→ 分摊版本 #${d.alloc_version.id} v${d.alloc_version.version_no}
+       （${esc(d.alloc_version.status)}），分配合计 <b class="${total===d.charge.amount_cents?'ok':'bad'}">
+       ${yuan(total)}</b>，守恒：${total===d.charge.amount_cents?'✔ 相等':'✘ 不符'}</p>`;
+    const el = document.createElement('div'); el.style.overflow='auto';
+    el.innerHTML = '<table><thead><tr><th>组织</th><th>路径</th><th>权重</th><th>金额</th><th>尾差标记</th><th>说明</th></tr></thead><tbody>'+
+      rows.map(l=>`<tr><td>${esc(l.org_unit_id)}</td><td>${esc(l.org_path)}</td>
+        <td>${l.weight}</td><td>${yuan(l.allocated_cents)}</td>
+        <td>${l.is_residual?'<span class="chip sup">residual</span>':'-'}</td>
+        <td class="muted">${esc(l.note||'')}</td></tr>`).join('')+'</tbody></table>';
+    const old = $('#trace-result table'); if(old) old.remove();
+    $('#trace-result').appendChild(el);
+  }catch(e){ $('#trace-result').innerHTML=`<p class="bad">${esc(e.message)}</p>`; }
+}
+
+async function postCharges(){
+  try{ const body=JSON.parse($('#charge-input').value);
+    toast(JSON.stringify(await post('/api/charges', body)));
+    loadInputs(); loadOverview(); loadAllocations();
+  }catch(e){ toast(e.message,true); }
+}
+async function postUsage(){
+  try{ const body=JSON.parse($('#usage-input').value);
+    toast(JSON.stringify(await post('/api/usage', body)));
+    loadInputs(); loadOverview(); loadAllocations();
+  }catch(e){ toast(e.message,true); }
+}
+async function postRule(){
+  try{
+    const weights = $('#rule-weights').value.trim()
+      ? JSON.parse($('#rule-weights').value) : null;
+    const r = await post('/api/rules', {
+      rule_id: $('#rule-id').value.trim() || undefined,
+      scenario_id: $('#rule-scenario').value, service_id: $('#rule-service').value.trim(),
+      basis: $('#rule-basis').value, effective_from: $('#rule-eff').value,
+      fixed_weights: weights});
+    toast('已保存规则版本: '+JSON.stringify(r));
+    loadRules(); loadAllocations(); loadOverview();
+  }catch(e){ toast(e.message,true); }
+}
+async function postScenario(){
+  try{ const r = await post('/api/scenarios',
+    {scenario_id:$('#scn-id').value.trim(), name:$('#scn-name').value.trim()});
+    toast('已创建情景: '+JSON.stringify(r));
+    loadRules(); loadOverview();
+  }catch(e){ toast(e.message,true); }
+}
+async function postOrgCorrection(){
+  try{
+    const r = await post('/api/org/correction', {
+      org_unit_id:$('#org-id').value.trim(),
+      new_name:$('#org-name').value.trim() || null,
+      new_parent_id:$('#org-parent').value.trim() || null,
+      valid_from:$('#org-from').value.trim(), reason:$('#org-reason').value.trim()});
+    toast('组织更正已提交，受影响账期: '+r.affected_periods.join(', '));
+    loadOrg(); loadAllocations(); loadOverview();
+  }catch(e){ toast(e.message,true); }
+}
+async function recompute(force){
+  try{ toast(JSON.stringify(await post('/api/recompute', {force})));
+    setTimeout(()=>{loadAllocations();loadOverview();}, 1200);
+  }catch(e){ toast(e.message,true); }
+}
+
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); $('#tab-'+b.dataset.tab).classList.add('active');
+  refreshAll();
+});
+async function refreshAll(){
+  await loadOverview();
+  if($('#tab-inputs').classList.contains('active')) loadInputs();
+  if($('#tab-allocations').classList.contains('active')) loadAllocations();
+  if($('#tab-rules').classList.contains('active')) loadRules();
+  if($('#tab-org').classList.contains('active')) loadOrg();
+}
+refreshAll();
+setInterval(loadOverview, 5000);
+</script>
+</body>
+</html>
